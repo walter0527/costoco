@@ -1,0 +1,651 @@
+import tkinter as tk
+from tkinter import simpledialog, messagebox, ttk, filedialog, Menu
+import pyautogui
+import json
+import pyperclip
+import openpyxl
+import keyboard
+import os 
+
+SPECIAL_KEYS_MAPPING = {
+    "Control_L": "ctrl",
+    "Control_R": "ctrl",
+    "Shift_L": "shift",
+    "Shift_R": "shift",
+    "Alt_L": "alt",
+    "Alt_R": "alt",
+    "Return": "enter"
+}
+
+class App:
+    def __init__(self, root):
+        # 스타일 설정
+        style = ttk.Style()
+        style.configure("TButton", font=("Arial", 10), padding=3)
+        style.configure("TLabel", font=("Arial", 10))
+        style.configure("TListbox", font=("Arial", 10), padding=3)
+
+        # 메뉴바 생성
+        menubar = Menu(root)
+        root.config(menu=menubar)
+
+        # 파일 메뉴 생성 및 메뉴바에 추가
+        file_menu = Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="파일", menu=file_menu)
+
+        # "새로만들기" 옵션 추가
+        file_menu.add_command(label="새로만들기", command=self.create_new)
+
+        # "액션 저장" 및 "액션 불러오기" 옵션 추가
+        file_menu.add_command(label="액션 저장", command=self.save_actions)
+        file_menu.add_command(label="액션 불러오기", command=self.load_actions)
+
+        # '상품 수집' 버튼 추가
+        menubar.add_command(label="상품 수집", command=self.collect_product)
+
+        # '상품정보입력' 메뉴 추가
+        menubar.add_command(label="상품정보입력", command=self.add_product_info_actions)
+
+        # 액션 및 텍스트 라인 인덱스 초기화
+        self.actions = []
+        self.text_line_index = {}
+
+        # 버튼 프레임 생성
+        button_frame = ttk.Frame(root)
+        button_frame.pack(pady=5)
+
+        # 연속 실행 버튼
+        self.continuous_execute_btn = ttk.Button(button_frame, text="연속 실행", command=self.start_continuous_execution)
+        self.continuous_execute_btn.grid(row=0, column=0, padx=5)
+
+        # 실행 중지 버튼
+        self.stop_execution_btn = ttk.Button(button_frame, text="실행 중지", command=self.stop_execution, state=tk.DISABLED)
+        self.stop_execution_btn.grid(row=0, column=1, padx=5)
+
+        # 실행 버튼
+        self.execute_btn = ttk.Button(button_frame, text="실행", command=self.execute_actions)
+        self.execute_btn.grid(row=0, column=2, padx=5)
+
+        # 전체 레이아웃을 위한 프레임 생성
+        main_frame = ttk.Frame(root)
+        main_frame.pack(pady=5, padx=5, fill=tk.BOTH, expand=True)
+
+        # 리스트박스와 스크롤바를 포함하는 프레임 생성
+        listbox_frame = ttk.Frame(root)
+        listbox_frame.pack(pady=5, padx=20, fill=tk.BOTH, expand=True)
+
+        # 액션 리스트박스
+        self.listbox = tk.Listbox(listbox_frame)
+        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.listbox.bind('<Double-1>', self.modify_action)
+
+        # 리스트박스에 대한 스크롤바 생성
+        scrollbar = ttk.Scrollbar(listbox_frame, orient="vertical", command=self.listbox.yview)
+        scrollbar.pack(side=tk.LEFT, fill=tk.Y)  # side를 LEFT로 변경
+        self.listbox.configure(yscrollcommand=scrollbar.set)
+
+        # 리스트박스 바로 오른쪽 버튼 프레임 생성
+        listbox_button_frame = ttk.Frame(listbox_frame)
+        listbox_button_frame.pack(side=tk.LEFT, fill=tk.Y)
+
+        # 위로 이동 버튼
+        self.up_btn = ttk.Button(listbox_button_frame, text="위", command=self.move_up)
+        self.up_btn.pack(pady=5)
+
+        # 아래로 이동 버튼
+        self.down_btn = ttk.Button(listbox_button_frame, text="아래", command=self.move_down)
+        self.down_btn.pack(pady=5)
+
+        # 버튼 프레임 생성
+        button_frame = ttk.Frame(root)
+        button_frame.pack(pady=20, padx=20)
+
+        # 엑셀 입력 버튼
+        self.add_excel_text_btn = ttk.Button(button_frame, text="엑셀 텍스트 입력", command=self.add_excel_text_input)
+        self.add_excel_text_btn.grid(row=0, column=0, padx=5, pady=5)
+
+        # 버튼 추가
+        self.change_excel_text_path_btn = ttk.Button(button_frame, text="엑셀 텍스트 경로 변경", command=self.change_excel_text_path)
+        self.change_excel_text_path_btn.grid(row=0, column=1, padx=5, pady=5)
+
+        # 텍스트 입력 버튼
+        self.add_text_btn = ttk.Button(button_frame, text="텍스트 입력", command=self.add_text_input)
+        self.add_text_btn.grid(row=0, column=2, padx=5, pady=5)
+
+        # 마우스 액션 버튼
+        self.add_mouse_btn = ttk.Button(button_frame, text="마우스 액션", command=self.add_mouse_action)
+        self.add_mouse_btn.grid(row=1, column=0, padx=5, pady=5)
+
+        # 키보드 액션 버튼
+        self.add_keyboard_btn = ttk.Button(button_frame, text="키보드 액션", command=self.add_keyboard_action)
+        self.add_keyboard_btn.grid(row=1, column=1, padx=5, pady=5)
+
+        # 액션 삭제 버튼
+        self.delete_btn = ttk.Button(button_frame, text="액션 삭제", command=self.delete_action)
+        self.delete_btn.grid(row=1, column=2, padx=5, pady=5)
+
+        # 그리드 레이아웃 가중치 설정
+        main_frame.grid_rowconfigure(0, weight=1)
+        main_frame.grid_columnconfigure(0, weight=1)
+
+        # 연속 실행 플래그 초기화
+        self.continue_execution = False
+        self.execute_btn_position = None  # 여기를 추가합니다.
+
+        root.bind('<Escape>', self.stop_execution_by_key)
+        
+    def create_new(self):
+        self.actions = []  # 액션 리스트를 초기화합니다.
+        self.listbox.delete(0, tk.END)  # 리스트박스의 모든 항목을 삭제합니다
+
+    def stop_execution_by_key(self, event):
+        """Stop the continuous execution of actions using the ESC key."""
+        self.stop_execution()
+
+    def collect_product(self):
+        self.actions = []  # 액션 리스트를 초기화합니다.
+        self.listbox.delete(0, tk.END)  # 리스트박스의 모든 항목을 삭제합니다
+        # 상품 수집 액션들
+        product_actions = [
+            ["move", [237, 82]], 
+            ["click_left"], 
+            ["press", ["ctrl", "a"]], 
+            ["excel_text",[],"", 10],
+            ["press", ["enter"]], 
+            ["delay", 0.5], 
+            ["move", [20, 120]], 
+            ["click_right"], 
+            ["delay", 0.3], 
+            ["move", [25, 123]], 
+            ["click_left"], 
+            ["delay", 1.0], 
+        ]
+        self.add_actions_to_list(product_actions)
+        
+    def add_product_info_actions(self):
+        self.actions = []  # 액션 리스트를 초기화합니다.
+        self.listbox.delete(0, tk.END)  # 리스트박스의 모든 항목을 삭제합니다
+        product_info_actions = [
+            ["move", [857, 165]],
+            ["click_left"],
+            ["move", [485, 280]],
+            ["click_left"],
+            ["excel_text",[],"", 9],
+            ["delay", 0.3],
+            ["move", [630, 161]],
+            ["click_left"],
+            ["move", [478, 281]],
+            ["click_left"],
+            ["excel_text",[],"", 7],
+            ["delay", 0.3],
+            ["move", [502, 161]],
+            ["click_left"],
+            ["move", [494, 398]],
+            ["click_left"],
+            ["excel_text",[],"", 3],
+            ["delay", 0.3],
+            ["move", [492, 732]],
+            ["click_left"],
+            ["excel_text",[],"", 3],
+            ["delay", 0.3],
+            ["move", [476, 810]],
+            ["click_left"],
+            ["excel_text",[],"", 11],
+            ["delay", 0.3],
+            ["press", ["Tab"]],
+            ["excel_text",[],"", 11],
+            ["delay", 0.3],
+            ["move", [503, 494]],
+            ["click_left"],
+            ["excel_text",[],"", 12],
+            ["press", ["enter"]]
+        ]
+        self.add_actions_to_list(product_info_actions)
+
+    def add_actions_to_list(self, actions_list):
+        for action in actions_list:
+            self.actions.append(action)
+            if action[0] == "move":
+                self.listbox.insert(tk.END, f"마우스 이동: {action[1]}")
+            elif action[0].startswith("click"):
+                self.listbox.insert(tk.END, f"{action[0].split('_')[1].capitalize()} 클릭")
+            elif action[0] == "press":
+                self.listbox.insert(tk.END, f"키 누름: {'+'.join(action[1])}")
+            elif action[0] == "delay":
+                self.listbox.insert(tk.END, f"{action[1]} 초 대기")
+            elif action[0] == "excel_text":
+                self.listbox.insert(tk.END, f"엑셀데이터입력:설정되지 않음")
+
+
+    def add_excel_text_input(self):
+        file_paths = filedialog.askopenfilenames(filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")])  # 복수의 파일 선택
+        for file_path in file_paths:
+            workbook = openpyxl.load_workbook(file_path, data_only=True)
+            sheet = workbook['등록화면']
+
+            # 첫 번째 행의 데이터를 가져옵니다.
+            first_row_data = [cell.value for cell in sheet[1] if cell.value]
+
+            # 첫 번째 행의 데이터를 리스트박스에서 선택할 수 있게 합니다.
+            column_choice_window = tk.Toplevel()
+            column_choice_window.title("Choose Column")
+            listbox = tk.Listbox(column_choice_window, height=len(first_row_data))
+            for item in first_row_data:
+                listbox.insert(tk.END, item)
+            listbox.pack(pady=10)
+
+            def confirm_choice():
+                selected = listbox.curselection()
+                if selected:
+                    column_index = selected[0] + 1  # +1 to adjust for 0-based index
+                    column_data = [cell.value for row in sheet.iter_rows(min_row=2, min_col=column_index, max_col=column_index) for cell in row]
+                    
+                    # 빈 문자열이나 "None" 값을 제거합니다.
+                    filtered_column_data = [item for item in column_data if item and item != "None" and item != '#N/A' and item != 'https://www.costco.co.kr/p/']
+
+                    
+                    self.actions.append(("excel_text", filtered_column_data, file_path, column_index))
+                    column_label = first_row_data[selected[0]]
+                    file_name = os.path.basename(file_path)  # 파일 경로에서 파일명만 추출합니다.
+                    self.listbox.insert(tk.END, f"엑셀텍스트입력: {column_label} - {file_name}")
+
+                column_choice_window.destroy()
+
+            confirm_button = tk.Button(column_choice_window, text="Confirm", command=confirm_choice)
+            confirm_button.pack(pady=10)
+
+
+    def change_excel_text_path(self):
+        file_paths = filedialog.askopenfilenames(filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")])  # 복수의 파일 선택
+        for file_path in file_paths:
+            workbook = openpyxl.load_workbook(file_path, data_only=True)
+            sheet = workbook['등록화면']
+
+            for i, action in enumerate(self.actions):
+                if action[0] == "excel_text":
+                    # 기존 액션에 컬럼 인덱스가 없으면 기본값으로 1을 사용합니다.
+                    column_index = action[3] if len(action) > 3 else 1
+                    
+                    column_data = [cell.value for row in sheet.iter_rows(min_row=2, min_col=column_index, max_col=column_index) for cell in row]
+                    
+                    # 빈 문자열이나 "None" 값을 제거합니다.
+                    filtered_column_data = [item for item in column_data if item and item != "None" and item != '#N/A' and item != 'https://www.costco.co.kr/p/']
+
+                    
+                    # 기존 'excel_text' 액션의 데이터와 경로를 수정합니다.
+                    self.actions[i] = ("excel_text", filtered_column_data, file_path, column_index)
+                    # 첫 번째 행의 해당 컬럼의 텍스트를 가져옵니다.
+                    column_label = sheet.cell(row=1, column=column_index).value
+                    
+                    # listbox 항목도 업데이트합니다.
+                    file_name = os.path.basename(file_path)  # 파일 경로에서 파일명만 추출합니다.
+                    self.listbox.delete(i)
+                    self.listbox.insert(i, f"엑셀데이터입력: {column_label}-{file_name}")
+
+    def store_execute_btn_position(self, event):
+        """Store the position of the execute button when it's clicked."""
+        self.execute_btn_position = (event.x_root, event.y_root)
+
+    def add_delay(self):
+        delay = simpledialog.askfloat("지연 시간", "초 단위로 지연 시간을 입력하세요")
+        if delay:
+            self.actions.append(("delay", delay))
+            self.listbox.insert(tk.END, f"{delay} 초 동안 지연")
+
+    def add_mouse_action(self, index=None):
+        is_modify_mode = index is not None
+        mouse_action_window = tk.Toplevel()
+        mouse_action_window.title("마우스 동작")
+        
+        ttk.Label(mouse_action_window, text="마우스 동작을 선택하세요:").pack(pady=10)
+        action_var = tk.StringVar()
+        ttk.Combobox(mouse_action_window, textvariable=action_var, values=["right", "left", "move"]).pack(pady=10)
+        
+        ttk.Button(mouse_action_window, text="확인", command=lambda: self.confirm_mouse_action(action_var, mouse_action_window, index)).pack(pady=20)
+
+    def confirm_mouse_action(self, action_var, window, index=None):
+        is_modify_mode = index is not None
+        mouse_action = action_var.get()
+        if mouse_action == "move":
+            x = simpledialog.askinteger("X", "X 위치를 입력하세요")
+            y = simpledialog.askinteger("Y", "Y 위치를 입력하세요")
+            if is_modify_mode:
+                self.actions[index] = ("move", (x, y))
+                self.listbox.delete(index)
+                self.listbox.insert(index, f"마우스를 ({x}, {y})로 이동")
+            else:
+                self.actions.append(("move", (x, y)))
+                self.listbox.insert(tk.END, f"마우스를 ({x}, {y})로 이동")
+        elif mouse_action == "right":
+            if is_modify_mode:
+                self.actions[index] = ("click_right",)
+                self.listbox.delete(index)
+                self.listbox.insert(index, "오른쪽 클릭")
+            else:
+                self.actions.append(("click_right",))
+                self.listbox.insert(tk.END, "오른쪽 클릭")
+        elif mouse_action == "left":
+            if is_modify_mode:
+                self.actions[index] = ("click_left",)
+                self.listbox.delete(index)
+                self.listbox.insert(index, "왼쪽 클릭")
+            else:
+                self.actions.append(("click_left",))
+                self.listbox.insert(tk.END, "왼쪽 클릭")
+        window.destroy()
+
+    def add_keyboard_action(self, index=None):
+        self.keys_pressed = []
+        key_input_window = tk.Toplevel()
+        key_input_window.title("Press Keys")
+        
+        self.key_display = tk.Label(key_input_window, text="", width=30)
+        self.key_display.pack(pady=20)
+        
+        confirm_button = tk.Button(key_input_window, text="Confirm", command=lambda: self.confirm_keys(key_input_window, index))
+        confirm_button.pack(pady=20)
+        
+        key_input_window.bind('<KeyPress>', self.record_key_press)
+        key_input_window.bind('<KeyRelease>', self.update_key_display)
+        key_input_window.focus_set()
+
+
+    def record_key_press(self, event):
+        key = SPECIAL_KEYS_MAPPING.get(event.keysym, event.keysym)
+        if key not in self.keys_pressed:
+            self.keys_pressed.append(key)
+
+
+    def update_key_display(self, event):
+        self.key_display.config(text='+'.join(self.keys_pressed))
+
+    def confirm_keys(self, window, index=None):
+        is_modify_mode = index is not None
+        if self.keys_pressed:
+            if is_modify_mode:
+                self.actions[index] = ("press", self.keys_pressed)
+                self.listbox.delete(index)
+                self.listbox.insert(index, f"Press {'+'.join(self.keys_pressed)}")
+            else:
+                self.actions.append(("press", self.keys_pressed))
+                self.listbox.insert(tk.END, f"Press {'+'.join(self.keys_pressed)}")
+            self.keys_pressed = []
+            window.destroy()
+
+    def add_key_combination(self, event):
+        if self.keys_pressed:
+            self.actions.append(("press", self.keys_pressed))
+            self.listbox.insert(tk.END, f"키 조합 누르기: {'+'.join(self.keys_pressed)}")
+            self.keys_pressed = []
+            event.widget.destroy()
+
+    def modify_action(self, event):
+        selected = self.listbox.curselection()
+        if selected:
+            index = selected[0]
+            action = self.actions[index]
+            action_type = action[0]
+            if len(action) > 1:
+                action_value = action[1]
+            else:
+                action_value = None
+
+            if action_type == "delay":
+                delay = simpledialog.askfloat("Delay", "Enter delay in seconds", initialvalue=action_value)
+                if delay:
+                    self.actions[index] = ("delay", delay)
+                    self.listbox.delete(index)
+                    self.listbox.insert(index, f"Delay for {delay} seconds")
+            elif action_type == "move":
+                self.add_mouse_action(index)
+            elif action_type.startswith("click"):
+                self.add_mouse_action(index)
+            elif action_type == "press":
+                self.add_keyboard_action(index)
+            elif action_type == "text":
+                self.add_text_input(index)
+            elif action_type == "excel_text":
+                self.modify_excel_text_input(index)
+
+
+    def delete_action(self):
+        selected = self.listbox.curselection()
+        if selected:
+            index = selected[0]
+            del self.actions[index]
+            self.listbox.delete(index)
+
+    def move_up(self):
+        selected = self.listbox.curselection()
+        if selected:
+            index = selected[0]
+            if index > 0:
+                self.actions[index], self.actions[index-1] = self.actions[index-1], self.actions[index]
+                action_text = self.listbox.get(index)
+                self.listbox.delete(index)
+                self.listbox.insert(index-1, action_text)
+                self.listbox.select_set(index-1)
+
+    def move_down(self):
+        selected = self.listbox.curselection()
+        if selected:
+            index = selected[0]
+            if index < len(self.actions) - 1:
+                self.actions[index], self.actions[index+1] = self.actions[index+1], self.actions[index]
+                action_text = self.listbox.get(index)
+                self.listbox.delete(index)
+                self.listbox.insert(index+1, action_text)
+                self.listbox.select_set(index+1)
+
+    def execute_actions(self):
+        for i, action in enumerate(self.actions):
+            if action[0] == "move":
+                pyautogui.moveTo(action[1][0], action[1][1])
+            elif action[0].startswith("click"):
+                button = action[0].split("_")[1]
+                if button not in ['left', 'right', 'middle']:
+                    raise ValueError(f"Invalid button value: {button}")
+                pyautogui.click(button=button)
+            elif action[0] == "press":
+                pyautogui.hotkey(*action[1])
+            elif action[0] == "text":
+                lines = action[1].splitlines()
+                current_line_index = self.text_line_index.get(i, 0)
+                
+                # pyperclip를 사용하여 텍스트를 클립보드에 복사
+                pyperclip.copy(lines[current_line_index])
+                # pyautogui를 사용하여 붙여넣기 수행
+                pyautogui.hotkey('ctrl', 'v')
+                
+                # Update the current line index for the next execution
+                next_line_index = current_line_index + 1
+                self.text_line_index[i] = next_line_index
+            
+            elif action[0] == "excel_text":
+                current_line_index = self.text_line_index.get(i, 0)
+                if current_line_index < len(action[1]):
+                    text = action[1][current_line_index]
+                    pyperclip.copy(text)
+                    pyautogui.hotkey('ctrl', 'v')
+                    self.text_line_index[i] = current_line_index + 1
+
+            elif action[0] == "delay"   :
+                pyautogui.sleep(action[1])
+
+        if self.execute_btn_position:
+            pyautogui.moveTo(*self.execute_btn_position)
+
+    def save_actions(self):
+        file_path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON files", "*.json"), ("All files", "*.*")])
+        if file_path:
+            # 액션을 저장하기 전에 수정
+            serialized_actions = []
+            for action in self.actions:
+                if action[0] == "excel_text":
+                    column_index = action[3] if len(action) > 3 else 1  # 컬럼 위치가 없으면 기본값 1을 사용
+                    serialized_actions.append(("excel_text", [str(item) for item in action[1]], action[2], column_index))
+                else:
+                    serialized_actions.append(action)
+            
+            with open(file_path, 'w', encoding='utf-8') as file:
+                json.dump(serialized_actions, file, ensure_ascii=False, indent=4)
+                
+    def load_actions(self):
+        file_path = filedialog.askopenfilename(filetypes=[("JSON files", "*.json"), ("All files", "*.*")])
+        if file_path:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                loaded_actions = json.load(file)
+            
+            # 액션을 불러온 후 수정
+            self.actions = []
+            for action in loaded_actions:
+                if action[0] == "excel_text":
+                    # 문자열을 다시 적절한 데이터 타입으로 변환
+                    self.actions.append(("excel_text", [str(item) for item in action[1]], action[2]))
+                else:
+                    self.actions.append(action)
+            
+            self.listbox.delete(0, tk.END)
+            for action in self.actions:
+                if action[0] == "delay":
+                    self.listbox.insert(tk.END, f"Delay for {action[1]} seconds")
+                elif action[0].startswith("click"):
+                    self.listbox.insert(tk.END, f"{action[0].split('_')[1].capitalize()} click")
+                elif action[0] == "move":
+                    self.listbox.insert(tk.END, f"Move mouse to {action[1]}")
+                elif action[0] == "press":
+                    self.listbox.insert(tk.END, f"Press {'+'.join(action[1])}")   
+                elif action[0] == "text":
+                    self.listbox.insert(tk.END, f"Type text: {action[1]}")
+                elif action[0] == "excel_text":
+                    # 엑셀 텍스트입력 액션을 리스트박스에 추가
+                    self.listbox.insert(tk.END, f"Excel 열에서 텍스트 입력: 로드됨")
+
+    def modify_excel_text_input(self, index):
+        current_data, file_path = self.actions[index][1], self.actions[index][2]  # 파일 경로를 가져옵니다.
+        
+        try:
+            workbook = openpyxl.load_workbook(file_path, data_only=True)  # 파일을 다시 읽어옵니다.
+            sheet = workbook['등록화면']
+        except openpyxl.utils.exceptions.InvalidFileException:
+            messagebox.showerror("오류", "지원하지 않는 파일 형식입니다. 경로를 확인하고 지원하는 형식의 파일을 선택해주세요.")
+            return  # 예외가 발생하면 함수를 종료합니다.
+
+        # 선택한 열의 모든 데이터를 가져옵니다.
+        column_data = [str(cell) if cell is not None else "" for cell in current_data]
+
+        # 첫 번째 행의 데이터를 사용하여 컬럼 라벨을 가져옵니다.
+        column_label = sheet.cell(row=1, column=index+1).value
+
+        # 파일 경로에서 파일 이름만 추출합니다.
+        file_name = file_path.split('/')[-1]
+
+        data_window = tk.Toplevel()
+        data_window.title("Modify Excel Text Input")
+
+        text_widget = tk.Text(data_window, width=50, height=10)
+        
+        # 수정된 데이터를 표시합니다.
+        text_widget.insert(tk.END, '\n'.join(column_data))
+        
+        text_widget.pack(pady=10)
+
+        def confirm_modification():
+            modified_data = text_widget.get("1.0", tk.END).strip().splitlines()
+            
+            # 저장된 액션에서 컬럼 인덱스를 가져옵니다.
+            column_index = self.actions[index][3]
+
+            # 해당 컬럼 인덱스를 사용하여 컬럼 라벨을 가져옵니다.
+            column_label = sheet.cell(row=1, column=column_index).value
+
+            # 파일 경로에서 파일 이름만 추출합니다.
+            file_name = os.path.basename(file_path)
+
+            # 수정된 데이터와 원래 데이터를 비교합니다.
+            if modified_data == current_data:
+                display_text = f"엑셀 텍스트 경로: {column_label}-{file_name}"
+            else:
+                display_text = "엑셀 텍스트 경로:수동 수정함"
+                self.actions[index] = ("excel_text", modified_data, file_path, column_index)  # 수정된 데이터와 파일 경로, 컬럼 인덱스를 액션에 저장합니다.
+            
+            self.listbox.delete(index)
+            self.listbox.insert(index, display_text)
+            data_window.destroy()
+
+        confirm_button = tk.Button(data_window, text="Confirm", command=confirm_modification)
+        confirm_button.pack(pady=10)
+
+
+
+            
+    def add_text_input(self, index=None):
+        text_input_window = tk.Toplevel()
+        text_input_window.title("Text Input")
+
+        text_widget = tk.Text(text_input_window, width=50, height=10)
+        text_widget.pack(pady=10)
+
+        # If in modify mode, populate the text widget with the existing text
+        if index is not None:
+            existing_text = self.actions[index][1]
+            text_widget.insert(tk.END, existing_text)
+
+        def confirm_text():
+            text = text_widget.get("1.0", tk.END).strip()
+            if text:
+                if index is not None:  # Modify mode
+                    self.actions[index] = ("text", text)
+                    self.listbox.delete(index)
+                    self.listbox.insert(index, f"Type text: {text}")
+                else:  # Add mode
+                    self.actions.append(("text", text))
+                    self.listbox.insert(tk.END, f"Type text: {text}")
+            text_input_window.destroy()
+
+        confirm_button = tk.Button(text_input_window, text="Confirm", command=confirm_text)
+        confirm_button.pack(pady=10)
+
+    def start_continuous_execution(self):
+        """Start continuous execution of actions."""
+        self.continue_execution = True
+        self.continuous_execute_btn.config(state=tk.DISABLED)
+        self.stop_execution_btn.config(state=tk.NORMAL)
+        
+        # ESC 키 이벤트 리스너 추가
+        keyboard.add_hotkey('esc', self.stop_execution)
+        
+        self.execute_actions_continuously()
+
+    def stop_execution(self):
+        """Stop the continuous execution of actions."""
+        self.continue_execution = False
+        self.continuous_execute_btn.config(state=tk.NORMAL)
+        self.stop_execution_btn.config(state=tk.DISABLED)
+        
+        # ESC 키 이벤트 리스너 제거
+        keyboard.remove_hotkey('esc')
+
+    def execute_actions_continuously(self):
+        """Execute actions in a loop until stopped."""
+        if not self.continue_execution:
+            return
+
+        # Check if there's a text action without any lines left
+        for i, action in enumerate(self.actions):
+            if action[0] == "text":
+                lines = action[1].splitlines()
+                current_line_index = self.text_line_index.get(i, 0)
+                if current_line_index >= len(lines):
+                    self.stop_execution()
+                    messagebox.showwarning("Warning", "Reached the end of the text input. Execution stopped.")
+                    return
+
+        self.execute_actions()
+
+        # Use the root's after method to schedule the next execution
+        root.after(1000, self.execute_actions_continuously)  # 1 second delay between executions
+        
+root = tk.Tk()
+app = App(root)
+root.mainloop()
