@@ -1,0 +1,1106 @@
+import os
+import csv
+import sys
+import time
+import json
+import re
+import openpyxl
+import keyboard
+import tkinter as tk
+import datetime
+from tkinter import filedialog
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
+from tkinter import messagebox
+from selenium import webdriver
+from webdriver_manager.chrome import ChromeDriverManager
+from tkinter import ttk 
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.keys import Keys
+from selenium.common.exceptions import NoSuchElementException
+from openpyxl import Workbook
+from selenium.common.exceptions import StaleElementReferenceException
+from selenium.webdriver.chrome.options import Options
+from selenium.common.exceptions import TimeoutException
+from openpyxl.styles import Border, Side
+import threading
+from selenium.webdriver.common.service import Service
+
+def load_last_selected_index():
+    try:
+        with open("last_selected.txt", "r") as f:
+            last_selected_index = int(f.read())
+            return last_selected_index
+    except:
+        return None
+
+def save_last_selected_index(index):
+    with open("last_selected.txt", "w") as f:
+        f.write(str(index))
+
+def load_credentials_from_excel():
+    if getattr(sys, 'frozen', False):
+        # 실행 파일로 실행 중인 경우
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        # 스크립트로 실행 중인 경우
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    file_path = os.path.join(base_dir, "회원카드정보.xlsx")
+    if not os.path.exists(file_path):
+        return None
+    workbook = openpyxl.load_workbook(file_path)
+    sheet = workbook.active
+    credentials = []
+
+    for row in sheet.iter_rows(min_row=2):
+        name = row[0].value
+        email = row[1].value
+        password = row[2].value
+        member_number = row[3].value
+        credentials.append({"name": name, "email": email, "password": password, "member_number": member_number})
+
+    return credentials
+
+def save_to_excel(sold_out_list, added_to_cart_list, costco_grocery_list):
+    # 엑셀 워크북 생성
+    workbook = Workbook()
+    
+    # 품절된 상품 시트 생성 및 데이터 저장
+    sold_out_sheet = workbook.active
+    sold_out_sheet.title = "품절된 상품"
+    for i, item in enumerate(sold_out_list, start=1):
+        sold_out_sheet.cell(row=i, column=1, value=item)
+    
+    # 장바구니에 담긴 상품 시트 생성 및 데이터 저장
+    added_to_cart_sheet = workbook.create_sheet("장바구니에 담긴 상품")
+    for i, item in enumerate(added_to_cart_list, start=1):
+        added_to_cart_sheet.cell(row=i, column=1, value=item)
+    
+    # Costco Grocery 상품 시트 생성 및 데이터 저장
+    costco_grocery_sheet = workbook.create_sheet("Costco Grocery 상품")
+    for i, item in enumerate(costco_grocery_list, start=1):
+        costco_grocery_sheet.cell(row=i, column=1, value=item)
+
+    # 엑셀 파일 저장
+    workbook.save("products.xlsx")
+
+def login_popup():  
+    global credentials
+    global filtered_credentials
+    credentials = load_credentials_from_excel()
+    filtered_credentials = credentials
+    selected_name = ""
+    selected_member_number = ""
+    def login_click():
+        global selected_name
+        global selected_member_number
+        # 선택한 주문자 정보를 가져옵니다.
+        selected_index = lb.curselection()
+        if len(selected_index) == 0:
+            messagebox.showerror("오류", "주문자를 선택해주세요.")
+            return
+        selected_cred = filtered_credentials[selected_index[0]]
+        selected_name = selected_cred['name']
+        selected_member_number = selected_cred['member_number']
+        # 로그인 페이지로 이동합니다.
+        driver.get('https://www.costco.co.kr/login')
+
+        # 로그인 정보를 입력합니다.
+        email_input = driver.find_element(By.ID, "j_username")
+        email_input.send_keys(selected_cred['email'])
+
+        password_input = driver.find_element(By.ID, "j_password")
+        password_input.send_keys(selected_cred['password'])
+
+        login_button = driver.find_element(By.ID, "loginSubmit")
+        login_button.click()
+
+        # 마지막으로 선택한 인덱스를 저장합니다.
+        original_index = index_mapping[selected_index[0]]  # 추가된 부분
+        save_last_selected_index(original_index)
+
+        root.destroy()
+        show_next_steps(root)
+
+    global index_mapping
+    index_mapping = {}
+    filtered_credentials = credentials
+    def refresh_listbox(updated_credentials=None):
+        global filtered_credentials  # 수정된 부분 2: 전역 변수 사용 선언
+        global index_mapping
+        lb.delete(0, tk.END)
+        if updated_credentials is None:
+            filtered_credentials = credentials
+            index_mapping = {i: i for i in range(len(credentials))}
+        else:
+            filtered_credentials = updated_credentials  # 수정된 부분 3: 전역 변수 업데이트
+            index_mapping = {i: credentials.index(cred) for i, cred in enumerate(filtered_credentials)}
+        for cred in filtered_credentials:
+            lb.insert(tk.END, f"{cred['name']} - {cred['email']} - {cred['password']}")
+        pass      
+        # last_selected_index를 리스트 객체로 변경합니다.
+        last_selected_index = load_last_selected_index()
+
+        if last_selected_index is not None and last_selected_index < len(credentials):
+            lb.selection_set(last_selected_index)  # 마지막 선택 항목을 선택된 상태로 설정
+            lb.see(last_selected_index)  # 마지막 선택 항목이 보이도록 스크롤   
+              
+    def login_window_search(*args):
+        search_str = search_var.get().strip().lower()
+        if search_str:
+            filtered_credentials = [cred for cred in credentials if search_str.lower() in cred['name'].lower() or search_str.lower() in cred['email'].lower() or search_str.lower() in cred['password'].lower()]
+        else:
+            filtered_credentials = None
+        refresh_listbox(filtered_credentials)
+
+    root = tk.Tk()
+    root.title("costco login(ver2.1)")
+    root.geometry("550x250")
+
+    # 창을 항상 맨 앞에 나오게 설정
+    root.lift()
+    root.attributes('-topmost', True)
+
+    # 다른 창을 클릭할 때 창이 뒤로 가도록 함
+    root.attributes('-topmost', False)
+
+    style = ttk.Style()
+    style.configure("TLabel", font=("맑은 고딕", 10), foreground="black")
+    style.configure("TButton", font=("맑은 고딕", 10), foreground="black")
+    style.configure("TEntry", font=("맑은 고딕", 10), foreground="black")
+
+    ttk.Label(root, text="costco 회원 선택").grid(row=0, column=0, padx=(10, 5), pady=(10, 10))
+
+    search_var = tk.StringVar()
+    search_var.set('')
+    search_var.trace("w", login_window_search)
+    search_entry = ttk.Entry(root, textvariable=search_var, width=15)
+    search_entry.grid(row=0, column=1, padx=(5, 10), pady=(10, 10))
+    
+    credentials = load_credentials_from_excel()
+    if not credentials:
+        root.destroy()
+        return
+
+    frame = tk.Frame(root)
+    frame.grid(row=1, column=0, rowspan=3, padx=20, pady=20)
+
+    scrollbar = tk.Scrollbar(frame)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+    lb = tk.Listbox(frame, yscrollcommand=scrollbar.set, width=50, height=10)
+    lb.pack(side=tk.LEFT, fill=tk.BOTH)
+    scrollbar.config(command=lb.yview)
+
+    # lb.bind('<Double-Button-1>', submit_login)
+    login_button = ttk.Button(root, text="로그인", command=login_click, width=10)
+    login_button.grid(row=1, column=1, padx=(5, 10), pady=(10, 10))
+    refresh_listbox()
+    root.mainloop()
+
+
+def toggle_button(button, text, command):
+    button.config(text=text, command=command)
+
+def start_thread(target, button, text, command):
+    thread = threading.Thread(target=target)
+    thread.start()
+    toggle_button(button, text, command)
+
+def show_next_steps(root):
+    next_steps_window = tk.Tk()
+    next_steps_window.title("costco order")
+    next_steps_window.geometry("410x170")
+
+
+    def select_file():
+        global excel_file_path
+        excel_file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx")])
+
+    # 스타일 설정
+    style = ttk.Style()
+    style.configure("TLabel", font=("맑은 고딕", 10), foreground="black")
+    style.configure("TButton", font=("맑은 고딕", 10), foreground="black")
+    style.configure("TEntry", font=("맑은 고딕", 10), foreground="black")
+    
+    separator = ttk.Separator(next_steps_window, orient="horizontal")
+    separator.grid(row=0, column=0, columnspan=4, sticky="ew", pady=2)
+
+    # 파일 선택 버튼 추가
+    file_select_button = ttk.Button(next_steps_window, text="파일 선택", command=select_file, width=30)
+    file_select_button.grid(row=1, column=0, columnspan=2, padx=(15, 0), pady=10)
+
+    back_button = ttk.Button(next_steps_window, text="이전", command=lambda: (next_steps_window.destroy(), login_popup()), width=15)
+    back_button.grid(row=1, column=2, padx=(15, 15), pady=10)
+
+    separator = ttk.Separator(next_steps_window, orient="horizontal")
+    separator.grid(row=2, column=0, columnspan=4, sticky="ew", pady=2)
+
+    add_address_button = ttk.Button(next_steps_window, text="주소입력", command=lambda: start_thread(add_address_click, add_address_button, "주소입력중지", stop_add_address), width=15)
+    add_address_button.grid(row=3, column=0, padx=(15, 0), pady=10)
+
+    shopping_cart_button = ttk.Button(next_steps_window, text="쇼핑카트담기", command=shopping_cart_click, width=15)
+    shopping_cart_button.grid(row=3, column=1, padx=(15, 0), pady=10)
+
+    payment_history_button = ttk.Button(next_steps_window, text="결제내역", command=payment_history_click, width=15)
+    payment_history_button.grid(row=3, column=2, padx=(15, 15), pady=10)
+
+    separator = ttk.Separator(next_steps_window, orient="horizontal")
+    separator.grid(row=4, column=0, columnspan=4, sticky="ew", pady=2)
+
+    get_order_summary_button = ttk.Button(next_steps_window, text="주문내역취합", command=open_order_summary_window, width=15)
+    get_order_summary_button.grid(row=5, column=0, padx=(15, 0), pady=10)
+
+    get_shipment_summary_button = ttk.Button(next_steps_window, text="송장번호취합", command=open_shipment_summary_window, width=15)
+    get_shipment_summary_button.grid(row=5, column=1, padx=(15, 0), pady=10)
+
+    delete_address_button = ttk.Button(next_steps_window, text="주소삭제", command=delete_address_click, width=15)
+    delete_address_button.grid(row=5, column=2, padx=(15, 15), pady=10)
+
+
+    next_steps_window.mainloop()
+
+    # 기존에 실행되었던 next_steps_window 창을 닫습니다.
+    for widget in root.winfo_children():
+        widget.destroy()
+    root.destroy()
+
+    root = tk.Tk()
+    root.title("로그인 정보 선택")
+    root.geometry("550x250")
+
+def remove_linebreaks(value):
+    if value is not None:
+        return re.sub(r'\s+', ' ', value)
+    return value
+
+def add_address_click():
+    global stop_flag  # <-- 이 부분을 추가
+    stop_flag = False  # 작업 시작 전에 중지 플래그를 초기화
+    workbook = openpyxl.load_workbook(excel_file_path)
+    
+    sheet = workbook.active
+    for row in sheet.iter_rows(min_row=2):
+        # 중지 플래그가 True면 작업 중지
+        if stop_flag:
+            print("주소 입력 작업이 중지되었습니다.")
+            return
+        name = remove_linebreaks(row[0].value)
+        phone = remove_linebreaks(row[1].value)
+        postal_code = remove_linebreaks(row[2].value)
+        address = remove_linebreaks(row[3].value)
+        address_detail = remove_linebreaks(row[4].value).replace('#', '샵').replace('*', '별')
+
+        add_address(driver, name, phone, postal_code, address, address_detail)
+
+    # 완료되면 팝업창 띄우기
+    show_popup()
+
+
+def add_address(driver, name, phone, postal_code, address, address_detail):
+    global stop_flag
+    # 중지 플래그가 True면 작업 중지
+    if stop_flag:
+        return
+       
+    driver.get("https://www.costco.co.kr/my-account/add-address/allAddresses")
+
+    wait = WebDriverWait(driver, 10)
+    wait.until(EC.presence_of_element_located((By.CLASS_NAME, "account-section")))
+
+    name_input = driver.find_element(By.ID, "firstName1")
+    name_input.send_keys(name)
+
+    phone_input = driver.find_element(By.ID, "phone1")
+    phone_input.send_keys(phone)
+
+    postal_code_input = driver.find_element(By.ID, "postalCode")
+    driver.execute_script("arguments[0].value = '{}';".format(postal_code), postal_code_input)
+
+    address_input = driver.find_element(By.ID, "homeAddress1")
+    driver.execute_script("arguments[0].value = '{}';".format(address), address_input)
+
+    address_detail_input = driver.find_element(By.ID, "homeAddress2")
+    address_detail_input.send_keys(address_detail)
+
+    save_button = driver.find_element(By.CSS_SELECTOR, "button.btn-primary.address-button[data-templateid='addAddressFormTemplate']")
+    driver.execute_script("arguments[0].click();", save_button)
+    wait.until(EC.url_to_be("https://www.costco.co.kr/my-account/address-book/allAddresses"))
+
+def stop_add_address():
+    global stop_flag
+    stop_flag = True
+
+def shopping_cart_click():
+    workbook = openpyxl.load_workbook(excel_file_path)
+    sheet = workbook.active
+    
+    product_url_dict = {}
+    for row in sheet.iter_rows(min_row=2):
+        # row[8]의 값이 '0'인 경우 건너뛰기
+        if row[8].value == 0:
+            continue
+        product_url = None
+        # row[7] 데이터가 있으면 사용하고, 없으면 row[6] 데이터 사용
+        if row[7].value:
+            product_url = str(row[7].value)
+        else:
+            product_url = str(row[6].value)
+        quantity = row[5].value
+        print(f"Product URL: {product_url}, Quantity: {quantity}")
+    
+        # product_url_dict에 상품 URL이 있는 경우, quantity를 합친 값으로 업데이트
+        
+        if product_url in product_url_dict:
+            product_url_dict[product_url] += quantity
+        else:
+            product_url_dict[product_url] = quantity
+
+    # product_url_dict에 있는 모든 상품 URL과 quantity를 shopping_cart 함수에 전달
+    for product_url, quantity in product_url_dict.items():
+        shopping_cart(driver, product_url, quantity)
+
+    print(f"현재 장바구니에 담긴 총 수량: {total_quantity}개")
+    # 상품 리스트를 엑셀 파일로 저장
+    save_to_excel(sold_out_list, added_to_cart_list, costco_grocery_list)
+
+    # 사용자가 '예'를 선택하면 저장된 파일 열기
+    open_saved_file("products.xlsx")
+    # 장바구니 담기   
+    driver.get("https://www.costco.co.kr/costcocheckout/single")
+    # 여러 주소로 배송하기 버튼 클릭
+    multiple_address_button = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.CSS_SELECTOR, "a.js-ship-to-multi-address-btn")))
+    multiple_address_button.click()
+    # 완료되면 팝업창 띄우기
+    show_popup()
+
+total_quantity = 0  # 전역 변수 total_quantity 선언
+
+def shopping_cart(driver, product_url, quantity):
+    global total_quantity
+    if product_url and quantity:  # 상품 URL과 수량이 설정되어 있을 때만 실행
+        driver.get("https://www.costco.co.kr/p/" + str(product_url))
+
+        wait = WebDriverWait(driver, 10)  # 최대 10초 동안 대기
+        
+        # Costco Grocery 상품 확인
+        grocery_label = None
+        try:
+            main_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '.product-page-container.ng-star-inserted')))
+            try:
+                grocery_label = main_element.find_element(By.CSS_SELECTOR, '.product-title-delivery.ng-star-inserted')
+            except NoSuchElementException:
+                pass
+        except TimeoutException:
+            pass
+
+        if grocery_label:
+            print(f"Costco Grocery 상품 {product_url}는 장바구니에 담지 않습니다.")
+            costco_grocery_list.append(product_url)
+            return
+
+        # 수량 입력 필드 찾기
+        quantity_input = None
+        try:
+            quantity_input = driver.find_element(By.CSS_SELECTOR, 'input.qty-selector__input')
+        except NoSuchElementException:
+            pass
+
+        # 장바구니 담기 버튼 찾기
+        add_to_cart_button = None
+        try:
+            add_to_cart_button = driver.find_element(By.XPATH, '//button[contains(@class, "add-to-cart__btn")]')
+        except NoSuchElementException:
+            pass
+
+        # 품절 여부 확인
+        is_sold_out = False
+        try:
+            sold_out_element = driver.find_element(By.XPATH, '//button[contains(@class, "add-to-cart__btn")][@disabled="disabled"]')
+            if sold_out_element:
+                is_sold_out = True
+        except NoSuchElementException:
+            pass
+
+        # 품절된 경우
+        if not quantity_input or not add_to_cart_button or is_sold_out:
+            print(f"상품코드 {product_url} 품절된 상품입니다.")
+            sold_out_list.append(product_url)
+            return
+        
+        # 수량 검사
+        current_quantity = int(quantity_input.get_attribute('value'))
+        if current_quantity > 0:
+            new_quantity = current_quantity + quantity
+        else:
+            new_quantity = quantity
+
+        # 수량 변경
+        for _ in range(2):
+            quantity_input.send_keys(Keys.BACK_SPACE)
+        quantity_input.send_keys(str(quantity))
+        driver.execute_script("arguments[0].dispatchEvent(new Event('change'));", quantity_input)
+
+        # 장바구니에 담기
+        add_to_cart_button.click()
+        print(f"장바구니에 상품코드 {product_url} 수량 {quantity}개를 담았습니다.")
+        added_to_cart_list.append(product_url)
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'ngb-modal-window.add-to-cart-modal')))
+
+        # 총 수량 업데이트
+        total_quantity += quantity
+    # Costco Grocery 상품이 아닌 경우
+    return costco_grocery_list
+
+def open_saved_file(file_path):
+    # 파일 열기 여부를 물어보는 대화상자 생성
+    root = tk.Tk()
+    root.withdraw()
+    open_file = messagebox.askyesno("파일 열기", "품절상품 리스트 파일을 열겠습니까?")
+    root.destroy()
+
+    # 사용자가 '예'를 선택한 경우 파일 열기
+    if open_file:
+        if sys.platform.startswith('darwin'):  # macOS
+            subprocess.call(('open', file_path))
+        elif os.name == 'nt':  # Windows
+            os.startfile(file_path)
+        elif os.name == 'posix':  # Linux
+            subprocess.call(('xdg-open', file_path))
+
+def get_added_to_cart_list(driver):
+    added_to_cart_list = []
+    product_elements = driver.find_elements(By.CSS_SELECTOR, "li.review-item.product-item.row")
+
+    for product_element in product_elements:
+        product_code_element = product_element.find_element(By.CSS_SELECTOR, "div.item-number > span.notranslate")
+        added_to_cart_list.append(product_code_element.text.strip())
+    print(f"added_to_cart_list: {added_to_cart_list}")  # 추가된 코드
+    return added_to_cart_list
+
+def payment_history_click():
+    driver.get("https://www.costco.co.kr/costcocheckout/single")
+    # 여러 주소로 배송하기 버튼 클릭
+    multiple_address_button = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.CSS_SELECTOR, "a.js-ship-to-multi-address-btn")))
+    multiple_address_button.click()
+    time.sleep(2)
+
+    added_to_cart_list = get_added_to_cart_list(driver)  # 장바구니에 있는 상품 코드 목록 생성
+    print(f"added_to_cart_list in payment_history_click: {added_to_cart_list}")  # 추가된 코드
+
+    workbook = openpyxl.load_workbook(excel_file_path)
+    sheet = workbook.active
+    product_index = 0
+    visited = {}
+    for row in sheet.iter_rows(min_row=2):
+        name = row[0].value
+        phone = row[1].value
+        postal_code = row[2].value
+        address = row[3].value
+        quantity = row[5].value
+        if row[7].value:
+            product_code = str(row[7].value)
+        elif row[6].value:
+            product_code = str(row[6].value)
+        else:
+            product_code = None
+        skip_flag = row[8].value
+
+        if skip_flag == '0':
+            print(f"{product_code} 상품이 스킵 처리되었습니다.")
+            continue
+
+        WebDriverWait(driver, 10).until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "a.js-change-shipping-address-btn")))
+        time.sleep(1)
+        matching_index, matching_product, visited = find_matching_product(driver, product_code, quantity, product_index, visited)
+
+        if not matching_product:
+            print(f"{product_code} 장바구니에 상품이 없어 건너뛰었습니다.")
+            continue
+
+        if matching_index == product_index + 1:
+            product_index += 1
+        matching_product.click()
+        select_address(driver, name, phone, postal_code, address, product_code, quantity, matching_product)
+
+    # 완료되면 팝업창 띄우기
+    show_popup()
+
+def find_matching_product(driver, product_code, quantity, start_index=0, visited=None):
+    if visited is None:
+        visited = {}
+
+    product_elements = driver.find_elements(By.CSS_SELECTOR, "li.review-item.product-item.row")
+
+    for i, product_element in enumerate(product_elements[start_index:], start=start_index):
+        if i in visited:
+            continue
+
+        product_code_element = product_element.find_element(By.CSS_SELECTOR, "div.item-number > span.notranslate")
+
+        if (product_code_element.text.strip() == str(product_code)):
+            quantity_element = product_element.find_element(By.CSS_SELECTOR, "div.product-qty > span.notranslate")
+
+            if quantity_element.text.strip().isdigit() and int(quantity_element.text.strip()) == int(quantity):
+                change_shipping_address_btn_locator = (By.CSS_SELECTOR, "a.js-change-shipping-address-btn")
+                WebDriverWait(driver, 10).until(EC.presence_of_element_located(change_shipping_address_btn_locator))
+                visited[i] = True
+                return i, product_element.find_element(By.CSS_SELECTOR, "a.js-change-shipping-address-btn"), visited
+
+    if start_index < len(product_elements) - 1:
+        return find_matching_product(driver, product_code, quantity, start_index + 1, visited)
+
+    return None, None, visited
+
+def select_address(driver, name, phone, postal_code, address, product_code, quantity, matching_product):
+    if matching_product:
+        WebDriverWait(driver, 10).until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "li.group-address-item")))
+        address_elements = driver.find_elements(By.CSS_SELECTOR, "li.group-address-item")
+
+        address_found = False
+
+        for address_element in address_elements:
+            address_name = address_element.find_element(By.CSS_SELECTOR, "span.notranslate").text
+            address_phone = address_element.find_element(By.CSS_SELECTOR, "span:last-child").text
+            address_postal_code = address_element.find_element(By.CSS_SELECTOR, "span[id^='postalCodeAddressField']").text
+            address_text = address_element.find_element(By.CSS_SELECTOR, "span:nth-child(4)").text
+
+            if (name == address_name and phone == address_phone and
+                    postal_code == address_postal_code and address == address_text):
+                label_element = address_element.find_element(By.CSS_SELECTOR, "label.address-details")
+                WebDriverWait(driver, 15).until(EC.element_to_be_clickable((By.CSS_SELECTOR, "label.address-details")))
+                label_element.click()
+                address_found = True
+                break
+
+        apply_button = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, "//button[contains(@class, 'js-choose-address-button')]")))
+        apply_button.click()
+
+        if address_found:
+            print(f"{name}, 상품코드: {product_code}, 수량: {quantity} 이 주소지로 변경되었습니다.")
+        else:
+            print(f"주소지가 없습니다 {name}, 상품코드: {product_code}, 수량: {quantity}")
+
+        WebDriverWait(driver, 20).until(EC.invisibility_of_element_located((By.CSS_SELECTOR, "div#chooseAddressModal.modal.fade.choose-shipping-address-popup.has-filter-bar.destroy.in")))
+
+def show_file_popup(filename):
+    global root
+    root.destroy()  # open_order_summary_window() 함수의 팝업창을 닫습니다.
+    
+    root = tk.Tk()
+    root.withdraw()  # 빈 창을 숨김
+    user_choice = messagebox.askyesno("파일 열기", "파일 생성이 완료되었습니다. 파일을 열겠습니까?")
+    if user_choice:
+        os.startfile(filename)  # 'filename'은 저장한 엑셀 파일의 이름입니다.
+    root.destroy()
+
+def get_order_summary(page_number, include_order_numbers=None, exclude_order_numbers=None):
+    # 결과를 저장할 데이터프레임 생성
+    result = pd.DataFrame(columns=["주문날짜", "순번", "거래처코드", "거래처명", "회원번호", "입고창고", "거래유형", "문자형식1", "통화", "환율", "부서", "상품코드", "품목명", "규격명", "수량", "단가(vat포함)", "단가", "외화금액", "공급가액", "부가세", "금액", "주문번호", "이름", "연락처"])
+
+    for page in range(1, page_number + 1):
+        if keyboard.is_pressed("esc"):
+            break
+        driver.get("https://www.costco.co.kr/my-account/orders?sort=byDate&page=" + str(page - 1))
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, "span.order-id a")))
+        # 주문 내역 페이지 요청
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+
+        # 주문 번호 추출
+        order_numbers = [a.text.strip() for a in soup.select("span.order-id a")]
+
+        # 주문 내역 수집
+        for order_number in order_numbers:
+            if exclude_order_numbers and order_number in exclude_order_numbers:
+                continue
+            if include_order_numbers and order_number not in include_order_numbers:
+                continue
+            order_detail_url = f"https://www.costco.co.kr/my-account/order/{order_number}"
+            driver.get(order_detail_url)
+            soup = BeautifulSoup(driver.page_source, "html.parser")
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.order-list")))
+
+            order_date_element = soup.select_one("div.order-date span.notranslate")
+            order_date = order_date_element.text.strip()[:10]
+
+            for order in soup.select("div.order-list"):
+                name = order.select_one("div.account-address-body span.notranslate").text
+                phone = order.select_one("div.account-address-body span:last-of-type").text
+
+                for item in order.select("ul.cart-list li"):
+                    product_code = "#" + item.select_one("div.item-number span.notranslate").text
+                    quantity = item.select_one("div.product-qty span.notranslate").text
+                    price = item.select_one("div.price-panel div.price-original span.notranslate").text
+                    price = int(price[:-1].replace(",", ""))
+                    discount_element = item.select_one("div.price-panel div.discount span.notranslate")
+                    if discount_element:
+                        discount = discount_element.text.replace('원', '').replace(',', '').strip()
+                    else:
+                        discount = "0"
+
+                    price_including_vat, price_excluding_vat, supply_price, vat = get_prices_and_vat(price, discount, quantity)
+                    #  반올림
+                    price_excluding_vat = round(price_excluding_vat, 0)
+                    supply_price = round(supply_price, 0)
+                    vat = round(vat, 0)
+                    data = {
+                        "주문날짜": order_date,
+                        "순번": get_sequence_number(order_number), 
+                        "거래처코드": 1078163829,
+                        "거래처명": "(주)코스트코코리아",
+                        "회원번호": selected_member_number,
+                        "입고창고": 100,
+                        "거래유형": 20,
+                        "문자형식1": "",
+                        "통화": "",
+                        "환율": "",
+                        "부서": "",
+                        "상품코드": product_code,
+                        "품목명": "",  # 품목명 정보를 입력해야 하는 경우 값을 지정하십시오.
+                        "규격명": "",  # 규격명 정보를 입력해야 하는 경우 값을 지정하십시오.
+                        "수량": quantity,
+                        "단가(vat포함)": price_including_vat,
+                        "단가": price_excluding_vat,
+                        "외화금액": "",  # 외화금액 정보를 입력해야 하는 경우 값을 지정하십시오.
+                        "공급가액": supply_price,
+                        "부가세": vat,
+                        "금액": price,
+                        "주문번호": order_number,
+                        "이름": name,
+                        "연락처": phone
+                    }
+                    result = pd.concat([result, pd.DataFrame(data, index=[0])], ignore_index=True)
+                    # 결과 출력
+
+    print(result)
+    # 현재 날짜와 시간을 가져옴
+    current_time = datetime.datetime.now()
+    # 날짜와 시간을 문자열로 변환 (예: 20230415102744)
+    date_string = current_time.strftime("%Y%m%d%H%M%S")
+    # 파일 이름 생성
+    filename = f"{date_string}_코스트코주문내역.xlsx"
+    # 완료되면 팝업창 띄우기
+    save_and_add_border(result, filename)
+    # 완료되면 팝업창 띄우기
+    show_file_popup(filename)
+
+# DataFrame을 엑셀 파일로 저장한 후, 다시 열어 선 추가
+def save_and_add_border(df, filename):
+    # DataFrame을 엑셀 파일로 저장
+    df.to_excel(filename, index=False)
+
+    # 엑셀 파일 열기
+    wb = openpyxl.load_workbook(filename)
+    ws = wb.active
+
+    # 선 스타일 정의
+    border = Border(bottom=Side(style='thin'))
+
+    # 마지막 행 번호
+    last_row = len(df) + 1
+
+    # 각 열에 대해 선 추가
+    for row_num in range(2, last_row):
+        current_order_number = ws.cell(row=row_num, column=22).value
+        next_order_number = ws.cell(row=row_num + 1, column=22).value
+        if current_order_number != next_order_number:
+            for col_num in range(1, len(df.columns) + 1):
+                cell = ws.cell(row=row_num, column=col_num)
+                cell.border = border
+
+    # 변경 사항 저장하고 파일 닫기
+    wb.save(filename)
+    wb.close()
+               
+def get_sequence_number(order_number):
+    return order_number[-4:]
+
+def get_prices_and_vat(price, discount, quantity):
+    price_including_vat = (int(price) - int(discount)) / int(quantity)
+    price_excluding_vat = price_including_vat * 100 / 110
+    supply_price = price_excluding_vat * int(quantity)
+    vat = (price_including_vat * 10 / 110) * int(quantity)
+    return price_including_vat, price_excluding_vat, supply_price, vat
+
+def submit_form():
+    global entry, include_order_entry, exclude_order_entry
+    page_input = entry.get()
+    include_order_input = include_order_entry.get()
+    exclude_order_input = exclude_order_entry.get()
+
+    if not page_input:
+        messagebox.showinfo("알림", "페이지를 입력해주세요.")
+        return
+
+    if include_order_input and exclude_order_input:
+        messagebox.showinfo("알림", "주문 번호를 포함하거나 제외할 수 있습니다. 둘 중 하나만 선택해 주세요.")
+        return
+
+    page_number = int(page_input)
+    include_order_numbers = [num.strip() for num in include_order_input.split(',')] if include_order_input else None
+    exclude_order_numbers = [num.strip() for num in exclude_order_input.split(',')] if exclude_order_input else None
+    get_order_summary(page_number, include_order_numbers, exclude_order_numbers)
+
+# 전역 변수 추가
+root = None
+def open_order_summary_window():
+    global root, entry, include_order_entry, exclude_order_entry
+    root = tk.Tk()
+    root.title("Costco송장 내역 취합")
+
+    # 스타일 설정
+    style = ttk.Style()
+    style.configure("TLabel", font=("맑은 고딕", 10), foreground="black")
+    style.configure("TButton", font=("맑은 고딕", 10), foreground="black")
+    style.configure("TEntry", font=("맑은 고딕", 10), foreground="black")
+
+    label = ttk.Label(root, text="주문페이지 번호 입력:")
+    label.grid(row=0, column=0, padx=(10, 5), pady=(10, 10))
+
+    entry = ttk.Entry(root)
+    entry.grid(row=0, column=1, padx=(5, 10), pady=(10, 10))
+
+    include_order_label = ttk.Label(root, text="지정할 주문번호")
+    include_order_label.grid(row=1, column=0, padx=(10, 5), pady=(10, 10))
+
+    include_order_entry = ttk.Entry(root)
+    include_order_entry.grid(row=1, column=1, padx=(5, 10), pady=(10, 10))
+
+    exclude_order_label = ttk.Label(root, text="제외할 주문번호")
+    exclude_order_label.grid(row=2, column=0, padx=(10, 5), pady=(10, 10))
+
+    exclude_order_entry = ttk.Entry(root)
+    exclude_order_entry.grid(row=2, column=1, padx=(5, 10), pady=(10, 10))
+
+    # 'ESC' 키 입력시 중단 문구 추가
+    esc_label = ttk.Label(root, text="'ESC' 키 입력시 중단")
+    esc_label.grid(row=3, column=0, columnspan=2, padx=10, pady=(0, 5))
+
+    submit_button = ttk.Button(root, text="주문취합", command=submit_form)
+    submit_button.grid(row=4, column=0, columnspan=2, padx=10, pady=(0, 10))
+
+    root.mainloop()
+
+
+def update_submit_button_text():
+    submit_button['text'] = "송장취합"
+
+def get_shipment_summary(page_number, exclude_orders=[]):
+    # 결과를 저장할 데이터프레임 생성
+    result = pd.DataFrame(columns=["주문날짜","주문번호", "수취인명", "우편번호", "기본배송지", "상세주소", "수취인연락처1", "송장번호", "송장링크", "택배사", "상품코드", "수량"])
+
+    for page in range(1, page_number + 1):
+        if not is_running:
+            break
+        driver.get("https://www.costco.co.kr/my-account/orders?sort=byDate&page=" + str(page - 1))
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, "span.order-id a")))
+        # 송장번호 페이지 요청
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+
+        # 주문번호 추출
+        order_numbers = [a.text.strip() for a in soup.select("span.order-id a")]
+
+        # 송장번호 내역 수집
+        for order_number in order_numbers:
+            if not is_running:
+                break
+            if order_number in exclude_orders:
+              continue
+            shipment_detail_url = f"https://www.costco.co.kr/my-account/order/{order_number}"
+            driver.get(shipment_detail_url)
+            soup = BeautifulSoup(driver.page_source, "html.parser")
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.order-list")))
+
+            order_date_element = soup.select_one("div.order-date span.notranslate")
+            order_date = order_date_element.text.strip()[:10]
+
+            for item in soup.select("div.order-list"):
+                if not is_running:
+                    break
+                tracking_link_elements = item.select("div.js-tracking-link")
+
+                if not tracking_link_elements:
+                    continue
+
+                name = item.select_one("div.account-address-body span.notranslate").text.strip()
+                phone = item.select_one("div.account-address-body span:last-of-type").text.strip()
+                address_element = item.select_one("div.account-address-body")
+                postal_code_element = address_element.select_one("span[id^='postalCodeAddressField_']")
+                address_span_elements = address_element.select("span.notranslate")[3:]
+
+                postal_code = postal_code_element.text.strip()
+                address = " ".join([elem.text.strip() for elem in address_span_elements[:-1]])
+                detail_address = address_span_elements[-1].text.strip()
+
+                # 상품코드와 수량 추출
+                products_info = []
+                for code, quantity in zip(item.select("div.item-number span.notranslate"), item.select("div.product-qty span.notranslate")):
+                    product_code = "#" + code.text
+                    product_quantity = quantity.text
+                    products_info.append((product_code, product_quantity))
+
+                unique_tracking_link_elements = list(set(tracking_link_elements))
+                for idx, tracking_link_element in enumerate(unique_tracking_link_elements):
+                    button_element = tracking_link_element.select_one("button.btn.btn-primary")
+                    if button_element is not None:
+                        tracking_link = button_element['onclick'].split("'")[1]
+                    else:
+                        continue
+
+                    if 'costco.co.kr' in tracking_link:
+                        driver.get(tracking_link)
+                        try:
+                            WebDriverWait(driver, 3).until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.order-header-wrapper h2.order-header")))
+                            tracking_link_element = driver.find_element(By.CSS_SELECTOR, "div.delivery-info span.row a.back-orders-link")
+                            tracking_link = tracking_link_element.get_attribute('href')
+                            tracking_number = tracking_link_element.text.strip()
+                        except:
+                            try:    
+                                WebDriverWait(driver, 3).until(EC.presence_of_element_located((By.CSS_SELECTOR, "h1.box-popTop")))
+                                tracking_number = re.search(r'gnbInvcNo=(\d+)', driver.current_url).group(1)
+                                tracking_link = driver.current_url
+                            except:
+                                tracking_number = '직접전달'
+                                tracking_link = driver.current_url
+
+                    elif 'epost.go.kr' in tracking_link:
+                        tracking_number = re.search(r'sid1=(\d+)', tracking_link).group(1) if re.search(r'sid1=(\d+)', tracking_link) else ""
+                    elif 'hanjin' in tracking_link:
+                        tracking_number = re.search(r'wblnumText2=(\d+)', tracking_link).group(1) if re.search(r'wblnumText2=(\d+)', tracking_link) else ""
+                    else:
+                        tracking_number = re.search(r'\d+', tracking_link).group()
+
+                    delivery_company = get_delivery_company_from_url(tracking_link)
+
+                    if tracking_number in result['송장번호'].values:
+                        continue
+
+                    product_code, quantity = products_info[idx] if idx < len(products_info) else ("", "")
+
+                    data = {
+                        "주문날짜": order_date,
+                        "주문번호": order_number,
+                        "수취인명": name,
+                        "우편번호": postal_code,
+                        "기본배송지": address,
+                        "상세주소": detail_address,
+                        "수취인연락처1": phone,
+                        "송장번호": tracking_number,
+                        "송장링크": tracking_link,
+                        "택배사": delivery_company,
+                        "상품코드": product_code,
+                        "수량": quantity
+                    }
+                    result = pd.concat([result, pd.DataFrame(data, index=[0])], ignore_index=True)
+
+    print(result)
+    # 현재 날짜와 시간을 가져옴
+    current_time = datetime.datetime.now()
+    # 날짜와 시간을 문자열로 변환 (예: 20230415102744)
+    date_string = current_time.strftime("%Y%m%d%H%M%S")
+    # 파일 이름 생성
+    filename = f"{date_string}_송장번호취합.xlsx"
+    # 엑셀 파일로 저장
+    result.to_excel(filename, index=False)
+    # 완료되면 팝업창 띄우기
+    show_shipment_file_popup(filename)
+
+def get_delivery_company_from_url(url):
+    if url is None:
+        return '직접전달'
+    if 'cjlogistics' in url:
+        return 'CJ대한통운'
+    elif 'lotteglogis' in url:
+        return '롯데택배'
+    elif 'hanjin' in url:
+        return '한진택배'
+    elif 'epost' in url:
+        return '우체국택배'
+    elif 'chunil' in url:
+        return '천일택배'
+    elif 'ilogen' in url:
+        return '로젠택배'
+    elif 'kgbps' in url:
+        return 'KGB택배'
+    elif 'ds3211' in url:
+        return '대신택배'
+    elif 'kdexp' in url:
+        return '경동택배'
+    elif 'ilyanglogis' in url:
+        return '일양로지스'
+    elif "costco.co.kr" in url:
+        return "기타"
+    else:
+        return '택배사정보없음'
+
+is_running = False
+
+def submit_shipment_form():
+    global is_running
+    if not is_running: # 크롤링이 진행 중이 아니면 크롤링을 시작
+        # 크롤링 시작 전 is_running 값을 True로 설정
+        is_running = True
+
+        submit_button['text'] = "송장취합중지"
+        
+        # 별도의 스레드에서 크롤링을 시작합니다.
+        thread = threading.Thread(target=start_crawling)
+        thread.start()
+    else:
+        # 크롤링이 진행 중이면 작업을 중지하게 만듭니다.
+        is_running = False
+        submit_button['text'] = "송장취합"
+
+def start_crawling():
+    global entry, exclude_order_entry
+    # 크롤링 시작 전 is_running 값을 True로 설정
+    is_running = True
+    page_number = int(entry.get())
+    exclude_orders = [order.strip() for order in exclude_order_entry.get().split(',') if order.strip()]
+    page_input = entry.get()
+    if not page_input:
+        messagebox.showinfo("알림", "페이지를 입력해주세요.")
+        return
+    page_number = int(page_input)
+    get_shipment_summary(page_number, exclude_orders)
+    
+    # 크롤링이 완료되면 is_running 값을 False로 설정
+    is_running = False
+    # 크롤링이 완료되면 버튼 텍스트를 다시 원래대로 만듭니다.
+    root.after(0, update_submit_button_text)
+# 전역 변수 추가
+    
+def show_shipment_file_popup(filename):
+    global root
+    root.destroy()  # open_shipment_summary_window() 함수의 팝업창을 닫습니다.
+    
+    root = tk.Tk()
+    root.withdraw()  # 빈 창을 숨김
+    user_choice = messagebox.askyesno("파일 열기", "파일 생성이 완료되었습니다. 파일을 열겠습니까?")
+    if user_choice:
+        os.startfile(filename)  # 'filename'은 저장한 엑셀 파일의 이름입니다.
+    root.destroy()
+
+
+root = None
+def open_shipment_summary_window():
+    global entry, root, exclude_order_entry, submit_button  # submit_button도 전역 변수로 추가합니다.
+    root = tk.Tk()
+    root.title("Costco송장 내역 취합")
+
+    # 스타일 설정
+    style = ttk.Style()
+    style.configure("TLabel", font=("맑은 고딕", 10), foreground="black")
+    style.configure("TButton", font=("맑은 고딕", 10), foreground="black")
+    style.configure("TEntry", font=("맑은 고딕", 10), foreground="black")
+
+    label = ttk.Label(root, text="송장취합페이지 번호 입력:")
+    label.grid(row=0, column=0, padx=(10, 5), pady=(10, 10))
+
+    entry = ttk.Entry(root)
+    entry.grid(row=0, column=1, padx=(5, 10), pady=(10, 10))
+
+    # 제외할 주문번호 입력
+    exclude_order_label = ttk.Label(root, text="제외할 주문번호 (쉼표로 구분):")
+    exclude_order_label.grid(row=1, column=0, padx=(10, 5), pady=(10, 10))
+
+    exclude_order_entry = ttk.Entry(root)
+    exclude_order_entry.grid(row=1, column=1, padx=(5, 10), pady=(10, 10))
+
+    submit_button = ttk.Button(root, text="송장취합", command=submit_shipment_form)
+    submit_button.grid(row=3, column=0, columnspan=2, padx=10, pady=(0, 10))
+
+    root.mainloop()
+
+def delete_address_click():
+    # 주소록 페이지로 이동
+    driver.get("https://www.costco.co.kr/my-account/address-book/allAddresses")
+
+    while True:
+        try:
+            # 삭제할 주소 선택
+            addresses = driver.find_elements(By.XPATH, "//div[@class='account-address-body']")
+            if len(addresses) < 2:
+                messagebox.showerror("주소 삭제 오류", "삭제할 주소가 2개 이상이어야 합니다.")
+                return
+            address = addresses[1]
+            delete_button = address.find_element(By.XPATH, "//a[@class='js-myaccount-remove-address-button']")
+
+            # 주소 삭제 버튼 클릭
+            delete_button.click()
+
+            # 삭제 확인 팝업창 대기
+            wait = WebDriverWait(driver, 10)
+            confirm_button_xpath = "//button[@class='btn btn-primary yes js-delete-address-yes-button']"
+            wait.until(EC.presence_of_element_located((By.XPATH, confirm_button_xpath)))
+
+            # 확인 버튼 클릭
+            confirm_button = driver.find_element(By.XPATH, confirm_button_xpath)
+            confirm_button.click()
+
+            # 주소 삭제 완료될 때까지 대기
+            wait.until(EC.staleness_of(address))
+        except (IndexError, ValueError):
+            break
+
+def delete_address():
+    try:
+        driver = webdriver.Chrome() # webdriver 인스턴스 생성
+        delete_address_click() # delete_address_click 함수 실행
+    except Exception as e:
+        messagebox.showerror("주소 삭제 오류", f"다음 오류가 발생했습니다:\n{str(e)}")
+    finally:
+        if driver is not None:
+            driver.quit()
+      
+
+def show_popup():
+    # 팝업창 생성
+    popup = tk.Toplevel()
+    popup.title("완료")
+    popup.geometry("200x100")
+
+    # 팝업창을 항상 맨 앞에 나오게 설정
+    popup.lift()
+    popup.attributes('-topmost', True)
+
+    # 다른 창을 클릭할 때 창이 뒤로 가도록 함
+    popup.attributes('-topmost', False)
+
+    # 메시지 출력
+    message_label = tk.Label(popup, text="작업이 완료되었습니다.")
+    message_label.pack(pady=10)
+
+    # 확인 버튼 추가
+    ok_button = tk.Button(popup, text="확인", command=popup.destroy, width=15, height=5)
+    ok_button.pack(pady=10)
+
+
+# 추가: 리스트 변수 생성
+sold_out_list = []
+added_to_cart_list = []
+costco_grocery_list = []
+
+chrome_options = webdriver.ChromeOptions()
+chrome_options.add_argument('--disable-gpu')  # GPU 사용 비활성화
+#chrome_options.add_argument('--headless')  # 필요시, 브라우저 창 숨기기
+
+# webdriver_manager를 사용하여 크롬 드라이버의 최신 버전을 자동으로 다운로드 및 설정
+driver_path = ChromeDriverManager().install()
+driver_service = webdriver.chrome.service.Service(driver_path)
+driver = webdriver.Chrome(service=driver_service, options=chrome_options)
+
+driver.get('https://www.costco.co.kr/login')
+
+email = None
+password = None
+
+login_popup()
+show_popup()
+driver.quit()
+
