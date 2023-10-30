@@ -407,7 +407,6 @@ class App:
             elif action_type == "excel_text":
                 self.modify_excel_text_input(index)
 
-
     def delete_action(self):
         selected = self.listbox.curselection()
         if selected:
