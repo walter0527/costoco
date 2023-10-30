@@ -54,6 +54,18 @@ class App:
         button_frame = ttk.Frame(root)
         button_frame.pack(pady=5)
 
+        # control_frame 초기화
+        self.control_frame = ttk.Frame(root)
+        self.control_frame.pack(pady=20)
+
+        # 시작 인덱스를 설정하는 입력 필드 추가
+        self.start_index_label = ttk.Label(self.control_frame, text="시작 인덱스:")
+        self.start_index_label.grid(row=1, column=0, padx=5, pady=5)
+                
+        self.start_index_var = tk.IntVar()  # 시작 인덱스를 저장하는 변수
+        self.start_index_entry = ttk.Entry(self.control_frame, textvariable=self.start_index_var)
+        self.start_index_entry.grid(row=1, column=1, padx=5, pady=5)
+
         # 연속 실행 버튼
         self.continuous_execute_btn = ttk.Button(button_frame, text="연속 실행", command=self.start_continuous_execution)
         self.continuous_execute_btn.grid(row=0, column=0, padx=5)
@@ -611,6 +623,11 @@ class App:
         self.continuous_execute_btn.config(state=tk.DISABLED)
         self.stop_execution_btn.config(state=tk.NORMAL)
         
+        # 입력된 시작 인덱스 값을 가져옵니다.
+        start_index = self.start_index_var.get() - 1  # 0-based index로 변환
+        for i, action in enumerate(self.actions):
+            if action[0] == "excel_text":
+                self.text_line_index[i] = max(self.text_line_index.get(i, 0), start_index)
         # ESC 키 이벤트 리스너 추가
         keyboard.add_hotkey('esc', self.stop_execution)
         
@@ -622,6 +639,10 @@ class App:
         self.continuous_execute_btn.config(state=tk.NORMAL)
         self.stop_execution_btn.config(state=tk.DISABLED)
         
+        # Reset the text line index
+        for i, action in enumerate(self.actions):
+            if action[0] == "excel_text":
+                self.text_line_index[i] = 0
         # ESC 키 이벤트 리스너 제거
         keyboard.remove_hotkey('esc')
 
@@ -632,13 +653,13 @@ class App:
 
         # Check if there's a text action without any lines left
         for i, action in enumerate(self.actions):
-            if action[0] == "text":
-                lines = action[1].splitlines()
+            if action[0] == "excel_text":
                 current_line_index = self.text_line_index.get(i, 0)
-                if current_line_index >= len(lines):
+                if current_line_index >= len(action[1]):
                     self.stop_execution()
-                    messagebox.showwarning("Warning", "Reached the end of the text input. Execution stopped.")
+                    messagebox.showwarning("완료", "완료했습니다.")
                     return
+
 
         self.execute_actions()
 
